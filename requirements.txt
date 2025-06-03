@@ -1,0 +1,15 @@
+# Modern Text Comparison Tool - Requirements
+# This application uses both tkinter (built-in) and PyQt5 versions
+
+# Required for PyQt5 version:
+PyQt5>=5.15.0
+
+# Built-in Python libraries (no installation needed):
+# tkinter (usually included with Python)
+# difflib (built-in Python library)
+# sys (built-in Python library)
+
+# For development and testing:
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=4.0.0
