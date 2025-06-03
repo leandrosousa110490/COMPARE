@@ -1,8 +1,9 @@
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QPushButton, QTextEdit, QFrame,
                              QFileDialog, QMenu, QAction, QToolBar, QMessageBox,
-                             QStyle)
-from PyQt5.QtGui import QTextCharFormat, QColor, QSyntaxHighlighter, QFont, QIcon, QDragEnterEvent, QDropEvent
+                             QStyle, QMenuBar, QActionGroup)
+from PyQt5.QtGui import (QTextCharFormat, QColor, QSyntaxHighlighter, QFont, QIcon, 
+                         QDragEnterEvent, QDropEvent, QKeySequence, QPalette)
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QSettings, QUrl, QMimeData, QSize
 from difflib import SequenceMatcher
 import sys
@@ -104,10 +105,11 @@ class DiffHighlighter(QSyntaxHighlighter):
                 self.setFormat(i1, i2 - i1, self.equal_format)
 
 class DragDropTextEdit(QTextEdit):
-    """Custom QTextEdit widget with enhanced drag and drop support.
+    """Custom QTextEdit widget with enhanced drag and drop support and undo/redo functionality.
     
     This widget handles both file drops (loading file content) and text drops
-    (inserting text directly). It provides visual feedback through status updates.
+    (inserting text directly). It provides visual feedback through status updates
+    and includes enhanced undo/redo capabilities with keyboard shortcuts.
     
     Attributes:
         text_area_id (int): Identifier for the text area (1 or 2)
@@ -125,6 +127,28 @@ class DragDropTextEdit(QTextEdit):
         self.text_area_id = text_area_id
         self.parent_app = parent
         self.setAcceptDrops(True)
+        
+        # Enable undo/redo functionality
+        self.setUndoRedoEnabled(True)
+        
+        # Create undo/redo actions with keyboard shortcuts
+        self.undo_action = QAction("Undo", self)
+        self.undo_action.setShortcut(QKeySequence.Undo)
+        self.undo_action.triggered.connect(self.undo)
+        self.addAction(self.undo_action)
+        
+        self.redo_action = QAction("Redo", self)
+        self.redo_action.setShortcut(QKeySequence.Redo)
+        self.redo_action.triggered.connect(self.redo)
+        self.addAction(self.redo_action)
+        
+        # Connect undo/redo availability signals
+        self.undoAvailable.connect(self.undo_action.setEnabled)
+        self.redoAvailable.connect(self.redo_action.setEnabled)
+        
+        # Initially disable undo/redo actions
+        self.undo_action.setEnabled(False)
+        self.redo_action.setEnabled(False)
         
     def dragEnterEvent(self, event):
         """Handle drag enter events for drag and drop functionality.
@@ -157,16 +181,39 @@ class DragDropTextEdit(QTextEdit):
             self.insertPlainText(event.mimeData().text())
             self.parent_app.status_label.setText(f"Text dropped into Text {self.text_area_id}")
         event.acceptProposedAction()
+    
+    def contextMenuEvent(self, event):
+        """Create custom context menu with undo/redo options.
+        
+        Args:
+            event (QContextMenuEvent): The context menu event
+        """
+        menu = self.createStandardContextMenu()
+        
+        # Add separator and undo/redo actions at the top
+        menu.insertSeparator(menu.actions()[0])
+        menu.insertAction(menu.actions()[0], self.redo_action)
+        menu.insertAction(menu.actions()[0], self.undo_action)
+        
+        menu.exec_(event.globalPos())
 
 
 class ModernTextCompareApp(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        # Initialize settings for recent files
+        # Initialize settings for recent files and themes
         self.settings = QSettings("TextCompare", "ModernTextCompareApp")
         self.recent_files = self.load_recent_files()
         self.max_recent_files = 5
+        
+        # Theme management
+        self.current_theme = self.settings.value("theme", "system")
+        self.themes = {
+            "dark": self.get_dark_theme(),
+            "light": self.get_light_theme(),
+            "system": self.get_system_theme()
+        }
         
         # Create standard icons for actions
         self.file_open_icon = self.style().standardIcon(QStyle.SP_FileDialogStart)
@@ -175,7 +222,51 @@ class ModernTextCompareApp(QMainWindow):
         
         self.init_ui()
         self.setup_connections()
+        self.apply_theme(self.current_theme)
         
+    def create_menu_bar(self):
+        """Create menu bar with theme options"""
+        menubar = self.menuBar()
+        
+        # View menu
+        view_menu = menubar.addMenu('View')
+        
+        # Theme submenu
+        theme_menu = view_menu.addMenu('Theme')
+        
+        # Create action group for themes (radio button behavior)
+        self.theme_group = QActionGroup(self)
+        
+        # Dark theme action
+        dark_action = QAction('Dark', self)
+        dark_action.setCheckable(True)
+        dark_action.triggered.connect(lambda: self.switch_theme('dark'))
+        self.theme_group.addAction(dark_action)
+        theme_menu.addAction(dark_action)
+        
+        # Light theme action
+        light_action = QAction('Light', self)
+        light_action.setCheckable(True)
+        light_action.triggered.connect(lambda: self.switch_theme('light'))
+        self.theme_group.addAction(light_action)
+        theme_menu.addAction(light_action)
+        
+        # System theme action
+        system_action = QAction('System', self)
+        system_action.setCheckable(True)
+        system_action.triggered.connect(lambda: self.switch_theme('system'))
+        self.theme_group.addAction(system_action)
+        theme_menu.addAction(system_action)
+        
+        # Set current theme as checked
+        current_theme = self.settings.value('theme', 'system')
+        if current_theme == 'dark':
+            dark_action.setChecked(True)
+        elif current_theme == 'light':
+            light_action.setChecked(True)
+        else:
+            system_action.setChecked(True)
+    
     def load_recent_files(self):
         """Load recent files from settings"""
         if self.settings.contains("recentFiles"):
@@ -188,12 +279,196 @@ class ModernTextCompareApp(QMainWindow):
                 return json.loads(value)
             except (TypeError, json.JSONDecodeError):
                 return []
-        return []
+    
+    def get_dark_theme(self):
+        """Get dark theme stylesheet"""
+        return """
+            QMainWindow {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QLabel {
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 5px;
+            }
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                border: 2px solid #404040;
+                border-radius: 5px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 12px;
+                padding: 10px;
+            }
+            QTextEdit:focus {
+                border-color: #0078d4;
+            }
+            QPushButton {
+                background-color: #3F3F46;
+                color: #E0E0E0;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #4F4F56;
+            }
+            QPushButton:pressed {
+                background-color: #2F2F36;
+            }
+            QFrame {
+                background-color: #2b2b2b;
+            }
+            QMenu {
+                background-color: #2D2D30;
+                color: #E0E0E0;
+                border: 1px solid #3F3F46;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 5px 20px 5px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #0078d4;
+                color: white;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #3F3F46;
+                margin: 5px 0px 5px 0px;
+            }
+            QToolBar {
+                background-color: #2D2D30;
+                border: none;
+                spacing: 3px;
+            }
+            QMenuBar {
+                background-color: #2D2D30;
+                color: #E0E0E0;
+                border: none;
+            }
+            QMenuBar::item {
+                background-color: transparent;
+                padding: 4px 8px;
+            }
+            QMenuBar::item:selected {
+                background-color: #3F3F46;
+            }
+        """
+    
+    def get_light_theme(self):
+        """Get light theme stylesheet"""
+        return """
+            QMainWindow {
+                background-color: #ffffff;
+                color: #000000;
+            }
+            QLabel {
+                color: #000000;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 5px;
+            }
+            QTextEdit {
+                background-color: #ffffff;
+                color: #000000;
+                border: 2px solid #cccccc;
+                border-radius: 5px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 12px;
+                padding: 10px;
+            }
+            QTextEdit:focus {
+                border-color: #0078d4;
+            }
+            QPushButton {
+                background-color: #f0f0f0;
+                color: #000000;
+                border: 1px solid #cccccc;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+            QFrame {
+                background-color: #ffffff;
+            }
+            QMenu {
+                background-color: #ffffff;
+                color: #000000;
+                border: 1px solid #cccccc;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 5px 20px 5px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #0078d4;
+                color: white;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #cccccc;
+                margin: 5px 0px 5px 0px;
+            }
+            QToolBar {
+                background-color: #f8f8f8;
+                border: none;
+                spacing: 3px;
+            }
+            QMenuBar {
+                background-color: #f8f8f8;
+                color: #000000;
+                border: none;
+            }
+            QMenuBar::item {
+                background-color: transparent;
+                padding: 4px 8px;
+            }
+            QMenuBar::item:selected {
+                background-color: #e0e0e0;
+            }
+        """
+    
+    def get_system_theme(self):
+        """Get system theme based on system palette"""
+        palette = QApplication.palette()
+        is_dark = palette.color(QPalette.Window).lightness() < 128
+        return self.get_dark_theme() if is_dark else self.get_light_theme()
+    
+    def apply_theme(self, theme_name):
+        """Apply the specified theme"""
+        if theme_name == "system":
+            stylesheet = self.get_system_theme()
+        else:
+            stylesheet = self.themes.get(theme_name, self.themes["dark"])
+        
+        self.setStyleSheet(stylesheet)
+        self.current_theme = theme_name
+        self.settings.setValue("theme", theme_name)
+    
+    def switch_theme(self, theme_name):
+        """Switch to a different theme"""
+        self.apply_theme(theme_name)
+        self.status_label.setText(f"Switched to {theme_name} theme")
         
     def init_ui(self):
         self.setWindowTitle("Modern Text Comparison Tool - PyQt5")
         self.setGeometry(100, 100, 1200, 800)
         self.setAcceptDrops(True)  # Enable drag and drop for the main window
+        
+        # Create menu bar
+        self.create_menu_bar()
         
         # Create toolbar
         self.toolbar = QToolBar("Main Toolbar")
@@ -233,54 +508,6 @@ class ModernTextCompareApp(QMainWindow):
         self.recent_files_action.setStatusTip("Access recently opened files")
         self.recent_files_action.setMenu(self.recent_files_menu)
         self.toolbar.addAction(self.recent_files_action)
-        
-        # Set dark theme
-        self.setStyleSheet("""            QMainWindow {
-                background-color: #2b2b2b;
-                color: #ffffff;
-            }
-            QLabel {
-                color: #ffffff;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 5px;
-            }
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #ffffff;
-                border: 2px solid #404040;
-                border-radius: 5px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 12px;
-                padding: 10px;
-            }
-            QTextEdit:focus {
-                border-color: #0078d4;
-            }
-            QFrame {
-                background-color: #2b2b2b;
-            }
-            /* Context menu hover effects */
-            QMenu {
-                background-color: #2D2D30;
-                color: #E0E0E0;
-                border: 1px solid #3F3F46;
-                padding: 5px;
-            }
-            QMenu::item {
-                padding: 5px 20px 5px 20px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #0078d4;
-                color: white;
-            }
-            QMenu::separator {
-                height: 1px;
-                background-color: #3F3F46;
-                margin: 5px 0px 5px 0px;
-            }
-        """)
         
         # Create central widget and main layout
         central_widget = QWidget()
