@@ -1,10 +1,9 @@
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QPushButton, QTextEdit, QFrame,
                              QFileDialog, QMenu, QAction, QToolBar, QMessageBox,
-                             QStyle, QMenuBar, QActionGroup)
-from PyQt5.QtGui import (QTextCharFormat, QColor, QSyntaxHighlighter, QFont, QIcon, 
-                         QDragEnterEvent, QDropEvent, QKeySequence, QPalette)
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QSettings, QUrl, QMimeData, QSize
+                             QStyle)
+from PyQt5.QtGui import QTextCharFormat, QColor, QSyntaxHighlighter, QFont, QIcon, QDragEnterEvent, QDropEvent, QPainter
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QSettings, QUrl, QMimeData, QSize, QRect
 from difflib import SequenceMatcher
 import sys
 import os
@@ -104,12 +103,14 @@ class DiffHighlighter(QSyntaxHighlighter):
                 # Show matching text normally
                 self.setFormat(i1, i2 - i1, self.equal_format)
 
+
+
+
 class DragDropTextEdit(QTextEdit):
-    """Custom QTextEdit widget with enhanced drag and drop support and undo/redo functionality.
+    """Custom QTextEdit widget with enhanced drag and drop support.
     
     This widget handles both file drops (loading file content) and text drops
-    (inserting text directly). It provides visual feedback through status updates
-    and includes enhanced undo/redo capabilities with keyboard shortcuts.
+    (inserting text directly). It provides visual feedback through status updates.
     
     Attributes:
         text_area_id (int): Identifier for the text area (1 or 2)
@@ -128,27 +129,10 @@ class DragDropTextEdit(QTextEdit):
         self.parent_app = parent
         self.setAcceptDrops(True)
         
-        # Enable undo/redo functionality
-        self.setUndoRedoEnabled(True)
+        # Line number area
+
         
-        # Create undo/redo actions with keyboard shortcuts
-        self.undo_action = QAction("Undo", self)
-        self.undo_action.setShortcut(QKeySequence.Undo)
-        self.undo_action.triggered.connect(self.undo)
-        self.addAction(self.undo_action)
-        
-        self.redo_action = QAction("Redo", self)
-        self.redo_action.setShortcut(QKeySequence.Redo)
-        self.redo_action.triggered.connect(self.redo)
-        self.addAction(self.redo_action)
-        
-        # Connect undo/redo availability signals
-        self.undoAvailable.connect(self.undo_action.setEnabled)
-        self.redoAvailable.connect(self.redo_action.setEnabled)
-        
-        # Initially disable undo/redo actions
-        self.undo_action.setEnabled(False)
-        self.redo_action.setEnabled(False)
+
         
     def dragEnterEvent(self, event):
         """Handle drag enter events for drag and drop functionality.
@@ -181,39 +165,16 @@ class DragDropTextEdit(QTextEdit):
             self.insertPlainText(event.mimeData().text())
             self.parent_app.status_label.setText(f"Text dropped into Text {self.text_area_id}")
         event.acceptProposedAction()
-    
-    def contextMenuEvent(self, event):
-        """Create custom context menu with undo/redo options.
-        
-        Args:
-            event (QContextMenuEvent): The context menu event
-        """
-        menu = self.createStandardContextMenu()
-        
-        # Add separator and undo/redo actions at the top
-        menu.insertSeparator(menu.actions()[0])
-        menu.insertAction(menu.actions()[0], self.redo_action)
-        menu.insertAction(menu.actions()[0], self.undo_action)
-        
-        menu.exec_(event.globalPos())
 
 
 class ModernTextCompareApp(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        # Initialize settings for recent files and themes
+        # Initialize settings for recent files
         self.settings = QSettings("TextCompare", "ModernTextCompareApp")
         self.recent_files = self.load_recent_files()
         self.max_recent_files = 5
-        
-        # Theme management
-        self.current_theme = self.settings.value("theme", "system")
-        self.themes = {
-            "dark": self.get_dark_theme(),
-            "light": self.get_light_theme(),
-            "system": self.get_system_theme()
-        }
         
         # Create standard icons for actions
         self.file_open_icon = self.style().standardIcon(QStyle.SP_FileDialogStart)
@@ -222,51 +183,7 @@ class ModernTextCompareApp(QMainWindow):
         
         self.init_ui()
         self.setup_connections()
-        self.apply_theme(self.current_theme)
         
-    def create_menu_bar(self):
-        """Create menu bar with theme options"""
-        menubar = self.menuBar()
-        
-        # View menu
-        view_menu = menubar.addMenu('View')
-        
-        # Theme submenu
-        theme_menu = view_menu.addMenu('Theme')
-        
-        # Create action group for themes (radio button behavior)
-        self.theme_group = QActionGroup(self)
-        
-        # Dark theme action
-        dark_action = QAction('Dark', self)
-        dark_action.setCheckable(True)
-        dark_action.triggered.connect(lambda: self.switch_theme('dark'))
-        self.theme_group.addAction(dark_action)
-        theme_menu.addAction(dark_action)
-        
-        # Light theme action
-        light_action = QAction('Light', self)
-        light_action.setCheckable(True)
-        light_action.triggered.connect(lambda: self.switch_theme('light'))
-        self.theme_group.addAction(light_action)
-        theme_menu.addAction(light_action)
-        
-        # System theme action
-        system_action = QAction('System', self)
-        system_action.setCheckable(True)
-        system_action.triggered.connect(lambda: self.switch_theme('system'))
-        self.theme_group.addAction(system_action)
-        theme_menu.addAction(system_action)
-        
-        # Set current theme as checked
-        current_theme = self.settings.value('theme', 'system')
-        if current_theme == 'dark':
-            dark_action.setChecked(True)
-        elif current_theme == 'light':
-            light_action.setChecked(True)
-        else:
-            system_action.setChecked(True)
-    
     def load_recent_files(self):
         """Load recent files from settings"""
         if self.settings.contains("recentFiles"):
@@ -279,196 +196,12 @@ class ModernTextCompareApp(QMainWindow):
                 return json.loads(value)
             except (TypeError, json.JSONDecodeError):
                 return []
-    
-    def get_dark_theme(self):
-        """Get dark theme stylesheet"""
-        return """
-            QMainWindow {
-                background-color: #2b2b2b;
-                color: #ffffff;
-            }
-            QLabel {
-                color: #ffffff;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 5px;
-            }
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #ffffff;
-                border: 2px solid #404040;
-                border-radius: 5px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 12px;
-                padding: 10px;
-            }
-            QTextEdit:focus {
-                border-color: #0078d4;
-            }
-            QPushButton {
-                background-color: #3F3F46;
-                color: #E0E0E0;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #4F4F56;
-            }
-            QPushButton:pressed {
-                background-color: #2F2F36;
-            }
-            QFrame {
-                background-color: #2b2b2b;
-            }
-            QMenu {
-                background-color: #2D2D30;
-                color: #E0E0E0;
-                border: 1px solid #3F3F46;
-                padding: 5px;
-            }
-            QMenu::item {
-                padding: 5px 20px 5px 20px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #0078d4;
-                color: white;
-            }
-            QMenu::separator {
-                height: 1px;
-                background-color: #3F3F46;
-                margin: 5px 0px 5px 0px;
-            }
-            QToolBar {
-                background-color: #2D2D30;
-                border: none;
-                spacing: 3px;
-            }
-            QMenuBar {
-                background-color: #2D2D30;
-                color: #E0E0E0;
-                border: none;
-            }
-            QMenuBar::item {
-                background-color: transparent;
-                padding: 4px 8px;
-            }
-            QMenuBar::item:selected {
-                background-color: #3F3F46;
-            }
-        """
-    
-    def get_light_theme(self):
-        """Get light theme stylesheet"""
-        return """
-            QMainWindow {
-                background-color: #ffffff;
-                color: #000000;
-            }
-            QLabel {
-                color: #000000;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 5px;
-            }
-            QTextEdit {
-                background-color: #ffffff;
-                color: #000000;
-                border: 2px solid #cccccc;
-                border-radius: 5px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 12px;
-                padding: 10px;
-            }
-            QTextEdit:focus {
-                border-color: #0078d4;
-            }
-            QPushButton {
-                background-color: #f0f0f0;
-                color: #000000;
-                border: 1px solid #cccccc;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
-            QFrame {
-                background-color: #ffffff;
-            }
-            QMenu {
-                background-color: #ffffff;
-                color: #000000;
-                border: 1px solid #cccccc;
-                padding: 5px;
-            }
-            QMenu::item {
-                padding: 5px 20px 5px 20px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #0078d4;
-                color: white;
-            }
-            QMenu::separator {
-                height: 1px;
-                background-color: #cccccc;
-                margin: 5px 0px 5px 0px;
-            }
-            QToolBar {
-                background-color: #f8f8f8;
-                border: none;
-                spacing: 3px;
-            }
-            QMenuBar {
-                background-color: #f8f8f8;
-                color: #000000;
-                border: none;
-            }
-            QMenuBar::item {
-                background-color: transparent;
-                padding: 4px 8px;
-            }
-            QMenuBar::item:selected {
-                background-color: #e0e0e0;
-            }
-        """
-    
-    def get_system_theme(self):
-        """Get system theme based on system palette"""
-        palette = QApplication.palette()
-        is_dark = palette.color(QPalette.Window).lightness() < 128
-        return self.get_dark_theme() if is_dark else self.get_light_theme()
-    
-    def apply_theme(self, theme_name):
-        """Apply the specified theme"""
-        if theme_name == "system":
-            stylesheet = self.get_system_theme()
-        else:
-            stylesheet = self.themes.get(theme_name, self.themes["dark"])
-        
-        self.setStyleSheet(stylesheet)
-        self.current_theme = theme_name
-        self.settings.setValue("theme", theme_name)
-    
-    def switch_theme(self, theme_name):
-        """Switch to a different theme"""
-        self.apply_theme(theme_name)
-        self.status_label.setText(f"Switched to {theme_name} theme")
+        return []
         
     def init_ui(self):
         self.setWindowTitle("Modern Text Comparison Tool - PyQt5")
         self.setGeometry(100, 100, 1200, 800)
         self.setAcceptDrops(True)  # Enable drag and drop for the main window
-        
-        # Create menu bar
-        self.create_menu_bar()
         
         # Create toolbar
         self.toolbar = QToolBar("Main Toolbar")
@@ -509,6 +242,80 @@ class ModernTextCompareApp(QMainWindow):
         self.recent_files_action.setMenu(self.recent_files_menu)
         self.toolbar.addAction(self.recent_files_action)
         
+        # Add separator and line numbers toggle
+        self.toolbar.addSeparator()
+        
+
+        
+        # Add separator and undo/redo actions
+        self.toolbar.addSeparator()
+        
+        # Undo action
+        self.action_undo = QAction(self.style().standardIcon(QStyle.SP_ArrowLeft), "Undo (Ctrl+Z)", self)
+        self.action_undo.setShortcut("Ctrl+Z")
+        self.action_undo.setStatusTip("Undo the last action")
+        self.action_undo.triggered.connect(self.undo_action)
+        self.action_undo.setEnabled(False)  # Initially disabled
+        
+        # Redo action
+        self.action_redo = QAction(self.style().standardIcon(QStyle.SP_ArrowRight), "Redo (Ctrl+Y)", self)
+        self.action_redo.setShortcut("Ctrl+Y")
+        self.action_redo.setStatusTip("Redo the last undone action")
+        self.action_redo.triggered.connect(self.redo_action)
+        self.action_redo.setEnabled(False)  # Initially disabled
+        
+        # Add undo/redo actions to toolbar
+        self.toolbar.addAction(self.action_undo)
+        self.toolbar.addAction(self.action_redo)
+        
+        # Set dark theme
+        self.setStyleSheet("""            QMainWindow {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QLabel {
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 5px;
+            }
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                border: 2px solid #404040;
+                border-radius: 5px;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 12px;
+                padding: 10px;
+            }
+            QTextEdit:focus {
+                border-color: #0078d4;
+            }
+            QFrame {
+                background-color: #2b2b2b;
+            }
+            /* Context menu hover effects */
+            QMenu {
+                background-color: #2D2D30;
+                color: #E0E0E0;
+                border: 1px solid #3F3F46;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 5px 20px 5px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #0078d4;
+                color: white;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #3F3F46;
+                margin: 5px 0px 5px 0px;
+            }
+        """)
+        
         # Create central widget and main layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -530,19 +337,30 @@ class ModernTextCompareApp(QMainWindow):
         text1_header = QHBoxLayout()
         text1_label = QLabel("Text 1:")
         text1_label.setStyleSheet("font-weight: bold; color: #E0E0E0;")
+        
+
+        
         text1_clear_btn = QPushButton("Clear")
-        text1_clear_btn.setStyleSheet("background-color: #3F3F46; color: #E0E0E0;")
+        text1_clear_btn.setStyleSheet("background-color: #3F3F46; color: #E0E0E0; padding: 3px 8px;")
         text1_clear_btn.clicked.connect(lambda: self.text1_edit.clear())
+        
         text1_header.addWidget(text1_label)
         text1_header.addStretch()
         text1_header.addWidget(text1_clear_btn)
+        
+        # Statistics for Text 1
+        self.text1_stats = QLabel("Lines: 0 | Words: 0 | Characters: 0")
+        self.text1_stats.setStyleSheet("color: #B0B0B0; font-size: 11px; padding: 2px;")
         
         # Create text edit with drag and drop support
         self.text1_edit = DragDropTextEdit(self, 1)
         self.text1_edit.setPlaceholderText("Enter or drop first text here...")
         self.text1_edit.setAcceptRichText(False)  # Accept only plain text
         self.text1_edit.setStyleSheet("background-color: #2D2D30; color: #E0E0E0; border: 1px solid #3F3F46;")
+        self.text1_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+        
         text1_layout.addLayout(text1_header)
+        text1_layout.addWidget(self.text1_stats)
         text1_layout.addWidget(self.text1_edit)
         
         # Text 2 input
@@ -550,25 +368,49 @@ class ModernTextCompareApp(QMainWindow):
         text2_header = QHBoxLayout()
         text2_label = QLabel("Text 2:")
         text2_label.setStyleSheet("font-weight: bold; color: #E0E0E0;")
+        
+
+        
         text2_clear_btn = QPushButton("Clear")
-        text2_clear_btn.setStyleSheet("background-color: #3F3F46; color: #E0E0E0; border: none; padding: 5px;")
+        text2_clear_btn.setStyleSheet("background-color: #3F3F46; color: #E0E0E0; padding: 3px 8px;")
         text2_clear_btn.setCursor(Qt.PointingHandCursor)
         text2_clear_btn.clicked.connect(lambda: self.text2_edit.clear())
+        
         text2_header.addWidget(text2_label)
         text2_header.addStretch()
         text2_header.addWidget(text2_clear_btn)
+        
+        # Statistics for Text 2
+        self.text2_stats = QLabel("Lines: 0 | Words: 0 | Characters: 0")
+        self.text2_stats.setStyleSheet("color: #B0B0B0; font-size: 11px; padding: 2px;")
         
         # Create text edit with drag and drop support
         self.text2_edit = DragDropTextEdit(self, 2)
         self.text2_edit.setPlaceholderText("Enter or drop second text here...")
         self.text2_edit.setAcceptRichText(False)  # Accept only plain text
         self.text2_edit.setStyleSheet("background-color: #2D2D30; color: #E0E0E0; border: 1px solid #3F3F46;")
+        self.text2_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+        
         text2_layout.addLayout(text2_header)
+        text2_layout.addWidget(self.text2_stats)
         text2_layout.addWidget(self.text2_edit)
         
         input_layout.addLayout(text1_layout)
         input_layout.addLayout(text2_layout)
         main_layout.addLayout(input_layout)
+        
+        # Comparison Statistics section
+        stats_layout = QVBoxLayout()
+        stats_header = QLabel("Comparison Statistics:")
+        stats_header.setStyleSheet("font-weight: bold; color: #E0E0E0; margin-top: 10px;")
+        
+        # Difference statistics
+        self.diff_stats = QLabel("Similarity: 100% | Lines Diff: 0 | Words Diff: 0 | Characters Diff: 0")
+        self.diff_stats.setStyleSheet("color: #4CAF50; font-size: 12px; padding: 5px; background-color: #2D2D30; border: 1px solid #3F3F46; border-radius: 3px;")
+        
+        stats_layout.addWidget(stats_header)
+        stats_layout.addWidget(self.diff_stats)
+        main_layout.addLayout(stats_layout)
         
         # Results section
         results_layout = QVBoxLayout()
@@ -584,7 +426,7 @@ class ModernTextCompareApp(QMainWindow):
         
         self.results_edit = QTextEdit()
         self.results_edit.setReadOnly(True)
-        self.results_edit.setMaximumHeight(300)
+        self.results_edit.setMaximumHeight(250)
         self.results_edit.setPlaceholderText("Comparison results will appear here...")
         self.results_edit.setStyleSheet("background-color: #2D2D30; color: #E0E0E0; border: 1px solid #3F3F46;")
         results_layout.addLayout(results_header)
@@ -609,6 +451,16 @@ class ModernTextCompareApp(QMainWindow):
         """Setup signal connections"""
         self.text1_edit.textChanged.connect(self.on_text_changed)
         self.text2_edit.textChanged.connect(self.on_text_changed)
+        
+        # Connect text statistics updates
+        self.text1_edit.textChanged.connect(lambda: self.update_text_statistics(1))
+        self.text2_edit.textChanged.connect(lambda: self.update_text_statistics(2))
+        
+        # Connect undo/redo availability signals
+        self.text1_edit.undoAvailable.connect(self.update_undo_redo_actions)
+        self.text1_edit.redoAvailable.connect(self.update_undo_redo_actions)
+        self.text2_edit.undoAvailable.connect(self.update_undo_redo_actions)
+        self.text2_edit.redoAvailable.connect(self.update_undo_redo_actions)
     
     def update_recent_files_menu(self):
         """Update the recent files menu"""
@@ -644,6 +496,126 @@ class ModernTextCompareApp(QMainWindow):
         self.recent_files = []
         self.settings.setValue("recentFiles", json.dumps(self.recent_files))
         self.update_recent_files_menu()
+    
+    def get_focused_text_edit(self):
+        """Get the currently focused text edit widget"""
+        if self.text1_edit.hasFocus():
+            return self.text1_edit
+        elif self.text2_edit.hasFocus():
+            return self.text2_edit
+        return None
+    
+    def undo_action(self):
+        """Perform undo on the focused text edit"""
+        focused_edit = self.get_focused_text_edit()
+        if focused_edit and focused_edit.document().isUndoAvailable():
+            focused_edit.undo()
+            self.status_label.setText("Undo performed")
+        else:
+            # If no text edit is focused, try both starting with text1
+            if self.text1_edit.document().isUndoAvailable():
+                self.text1_edit.undo()
+                self.status_label.setText("Undo performed on Text 1")
+            elif self.text2_edit.document().isUndoAvailable():
+                self.text2_edit.undo()
+                self.status_label.setText("Undo performed on Text 2")
+    
+    def redo_action(self):
+        """Perform redo on the focused text edit"""
+        focused_edit = self.get_focused_text_edit()
+        if focused_edit and focused_edit.document().isRedoAvailable():
+            focused_edit.redo()
+            self.status_label.setText("Redo performed")
+        else:
+            # If no text edit is focused, try both starting with text1
+            if self.text1_edit.document().isRedoAvailable():
+                self.text1_edit.redo()
+                self.status_label.setText("Redo performed on Text 1")
+            elif self.text2_edit.document().isRedoAvailable():
+                self.text2_edit.redo()
+                self.status_label.setText("Redo performed on Text 2")
+    
+    def update_undo_redo_actions(self):
+        """Update the enabled state of undo/redo actions based on availability"""
+        # Enable undo if either text edit has undo available
+        undo_available = (self.text1_edit.document().isUndoAvailable() or 
+                         self.text2_edit.document().isUndoAvailable())
+        self.action_undo.setEnabled(undo_available)
+        
+        # Enable redo if either text edit has redo available
+        redo_available = (self.text1_edit.document().isRedoAvailable() or 
+                         self.text2_edit.document().isRedoAvailable())
+        self.action_redo.setEnabled(redo_available)
+    
+
+    
+    def update_text_statistics(self, text_area_id):
+        """Update text statistics for the specified text area"""
+        if text_area_id == 1:
+            text_edit = self.text1_edit
+            stats_label = self.text1_stats
+        else:
+            text_edit = self.text2_edit
+            stats_label = self.text2_stats
+        
+        text = text_edit.toPlainText()
+        
+        # Calculate statistics
+        lines = len(text.splitlines()) if text.strip() else 0
+        words = len(text.split()) if text.strip() else 0
+        characters = len(text)
+        
+        # Update the statistics label
+        stats_label.setText(f"Lines: {lines} | Words: {words} | Characters: {characters}")
+        
+        # Update comparison statistics
+        self.update_comparison_statistics()
+    
+    def update_comparison_statistics(self):
+        """Update the comparison statistics between both texts"""
+        text1 = self.text1_edit.toPlainText()
+        text2 = self.text2_edit.toPlainText()
+        
+        if not text1 and not text2:
+            self.diff_stats.setText("Similarity: 100% | Lines Diff: 0 | Words Diff: 0 | Characters Diff: 0")
+            self.diff_stats.setStyleSheet("color: #4CAF50; font-size: 12px; padding: 5px; background-color: #2D2D30; border: 1px solid #3F3F46; border-radius: 3px;")
+            return
+        
+        # Calculate basic statistics
+        lines1 = len(text1.splitlines()) if text1.strip() else 0
+        lines2 = len(text2.splitlines()) if text2.strip() else 0
+        words1 = len(text1.split()) if text1.strip() else 0
+        words2 = len(text2.split()) if text2.strip() else 0
+        chars1 = len(text1)
+        chars2 = len(text2)
+        
+        # Calculate differences
+        lines_diff = abs(lines1 - lines2)
+        words_diff = abs(words1 - words2)
+        chars_diff = abs(chars1 - chars2)
+        
+        # Calculate similarity using SequenceMatcher
+        from difflib import SequenceMatcher
+        similarity = SequenceMatcher(None, text1, text2).ratio() * 100
+        
+        # Update the display
+        similarity_text = f"Similarity: {similarity:.1f}%"
+        diff_text = f"Lines Diff: {lines_diff} | Words Diff: {words_diff} | Characters Diff: {chars_diff}"
+        full_text = f"{similarity_text} | {diff_text}"
+        
+        self.diff_stats.setText(full_text)
+        
+        # Change color based on similarity
+        if similarity >= 90:
+            color = "#4CAF50"  # Green
+        elif similarity >= 70:
+            color = "#FF9800"  # Orange
+        else:
+            color = "#F44336"  # Red
+        
+        self.diff_stats.setStyleSheet(f"color: {color}; font-size: 12px; padding: 5px; background-color: #2D2D30; border: 1px solid #3F3F46; border-radius: 3px;")
+    
+
     
     def open_recent_file(self, file_path):
         """Open a file from the recent files list"""
